@@ -2,8 +2,10 @@ import psycopg2
 import uuid
 import random
 import time
+import os
 from datetime import datetime, timedelta
 from psycopg2.extras import execute_values
+from dotenv import load_dotenv
 
 MAX_USERS = 500000
 MAX_CATEGORIES = 5000
@@ -24,6 +26,9 @@ STATEMENTS_LIST = [
     'Second half messages insertion completed in'
 ]
 START_TIME = time.time()
+
+env_path = '.env'
+load_dotenv(dotenv_path=env_path)
 
 time_checkpoint = time.time()
 count_num = 1
@@ -72,6 +77,7 @@ get_start_block_time()
 author_uuid = [str(uuid.uuid4()) for i in range(MAX_USERS)]
 category_uuid = [str(uuid.uuid4()) for i in range(MAX_CATEGORIES)]
 message_uuid = [str(uuid.uuid4()) for i in range(MAX_MESSAGES)]
+
 
 pseudo_logger()
 
@@ -128,10 +134,11 @@ pseudo_logger()
 
 # Подключение к базе данных
 con = psycopg2.connect(
-    host="localhost",
-    database="green_bird",
-    user="postgres",
-    password="8080sql128080")
+    host=os.getenv("PG_HOST"),
+    database=os.getenv("PG_DATABASE"),
+    user=os.getenv("PG_USER"),
+    password=os.getenv("PG_PASSWORD"),
+    port=os.getenv("PG_PORT"))
 cur = con.cursor()
 
 # ----------------------------------------------------------------------------------------------------------------------
