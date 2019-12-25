@@ -1,210 +1,151 @@
-import psycopg2
+import os
+import time
 import uuid
 import random
-import time
-import os
-from datetime import datetime, timedelta
-from psycopg2.extras import execute_values
+import psycopg2
+import threading
+import concurrent.futures
 from dotenv import load_dotenv
+from datetime import datetime, timedelta
+from psycopg2.extras import execute_batch
 
 MAX_USERS = 500000
 MAX_CATEGORIES = 5000
 MAX_MESSAGES = 10000000
-HALF_MESSAGES = 5000000
+
 T_START = datetime(2010, 1, 1, 00, 00, 00)
 T_END = T_START + timedelta(days=365 * 10)
-STATEMENTS_LIST = [
-    'Uuid lists creation and containing completed in',
-    'Data lists creation completed in',
-    'List "users_array" filling completed in',
-    'List "categories_array" filling completed in',
-    'List "messages_array" filling completed in',
-    'Users insertion completed in',
-    'Categories insertion completed in',
-    'First half messages insertion completed in',
-    'List "messages_array2" filling completed in',
-    'Second half messages insertion completed in'
-]
-START_TIME = time.time()
 
-env_path = '.env'
-load_dotenv(dotenv_path=env_path)
-
-time_checkpoint = time.time()
-count_num = 1
+load_dotenv(dotenv_path='.env')
 
 
-# ----------------------------------------------------------------------------------------------------------------------
+def timeit(method):
+    def timed(*args, **kwargs):
+        time_start = time.time()
+        result = method(*args, **kwargs)
+        time_end = time.time()
+        print(method.__name__, ' for ', get_work_time(time_start, time_end))
+        return result
 
-# Функция для вывода времени работы программы и частей программы
-def get_checkpoint_time(x):
-    tt = time.time()
-    time_end = tt - x
-    time_end_int = int(time_end)
-    time_end_float = time_end - time_end_int
+    return timed
+
+
+def get_work_time(time_start, time_end):
+    total_time = time_end - time_start
+    total_time_int = int(total_time)
+    total_time_float = total_time - total_time_int
     min_availability = False
-    if time_end_int > 59:
-        time_end_minutes = time_end_int // 60
-        time_end_int -= time_end_minutes * 60
+    if total_time_int > 59:
+        total_time_minutes = total_time_int // 60
+        total_time_int -= total_time_minutes * 60
         min_availability = True
     if min_availability:
-        time_string = "%s minutes, %s seconds, %s milliseconds" % (time_end_minutes, time_end_int, time_end_float)
+        time_string = "%s минут, %s секунд, %s миллисекунд" % (total_time_minutes, total_time_int, total_time_float)
     else:
-        time_string = "%s seconds, %s milliseconds" % (time_end_int, time_end_float)
+        time_string = "%s секунд, %s миллисекунд" % (total_time_int, total_time_float)
     return time_string
 
 
-# Функция для записи времени начала работы блока программы
-def get_start_block_time():
-    global time_checkpoint
-    time_checkpoint = time.time()
+@timeit
+def author_uuid_creation():
+    author_uuid = [str(uuid.uuid4()) for i in range(MAX_USERS)]
+    return author_uuid
 
 
-# Функция для вывода информации и времени работы блока программы
-def pseudo_logger():
-    global count_num
-    global STATEMENTS_LIST
-    global time_checkpoint
-    print('[%d/10] --- %s --- [%s]' % (count_num, STATEMENTS_LIST[count_num - 1], get_checkpoint_time(time_checkpoint)))
-    count_num += 1
+@timeit
+def category_uuid_creation():
+    category_uuid = [str(uuid.uuid4()) for i in range(MAX_CATEGORIES)]
+    return category_uuid
 
 
-# ----------------------------------------------------------------------------------------------------------------------
-
-get_start_block_time()
-
-# Создание и заполнение списков uuid
-author_uuid = [str(uuid.uuid4()) for i in range(MAX_USERS)]
-category_uuid = [str(uuid.uuid4()) for i in range(MAX_CATEGORIES)]
-message_uuid = [str(uuid.uuid4()) for i in range(MAX_MESSAGES)]
+@timeit
+def message_uuid_creation():
+    message_uuid = [str(uuid.uuid4()) for i in range(MAX_MESSAGES)]
+    return message_uuid
 
 
-pseudo_logger()
+@timeit
+def containing_users_list(author_uuid):
+    for i in range(MAX_USERS):
+        yield author_uuid[i], 'User_' + str(i + 1)
 
-# ----------------------------------------------------------------------------------------------------------------------
 
-get_start_block_time()
+@timeit
+def containing_categories_list(category_uuid):
+    for i in range(MAX_CATEGORIES):
+        yield category_uuid[i], 'Category_' + str(i + 1), category_uuid[i]
 
-# Создание списков данных
-users_list = [[''] * 2 for i in range(MAX_USERS)]
-categories_list = [[''] * 3 for i in range(MAX_CATEGORIES)]
-messages_list = [[''] * 5 for i in range(HALF_MESSAGES)]
-messages_list2 = [[''] * 5 for i in range(HALF_MESSAGES)]
 
-pseudo_logger()
+@timeit
+def containing_messages_list(message_uuid, category_uuid, author_uuid):
+    for i in range(MAX_MESSAGES):
+        yield message_uuid[i], 'Text_' + str(i + 1), random.choice(category_uuid), T_START + (
+                T_END - T_START) * random.random(), random.choice(author_uuid)
 
-# ----------------------------------------------------------------------------------------------------------------------
 
-get_start_block_time()
+@timeit
+def data_base_connecting():
+    con = psycopg2.connect(
+        host=os.getenv("PG_HOST"),
+        database=os.getenv("PG_DATABASE"),
+        user=os.getenv("PG_USER"),
+        password=os.getenv("PG_PASSWORD"),
+        port=os.getenv("PG_PORT"))
+    cur = con.cursor()
+    return con, cur
 
-# Заполнение списка пользователей
-for i in range(MAX_USERS):
-    users_list[i][0] = author_uuid[i]
-    users_list[i][1] = 'User_' + str(i + 1)
 
-pseudo_logger()
+@timeit
+def inserting_users_data(cur, author_uuid):
+    cur.execute("PREPARE us AS INSERT INTO users VALUES($1, $2)")
+    containing_function = containing_users_list(author_uuid)
+    execute_batch(cur, "EXECUTE us (%s, %s)", iter(containing_function))
 
-# ----------------------------------------------------------------------------------------------------------------------
 
-get_start_block_time()
+@timeit
+def inserting_categories_data(cur, category_uuid):
+    cur.execute("PREPARE cat AS INSERT INTO categories VALUES($1, $2, $3)")
+    containing_function = containing_categories_list(category_uuid)
+    execute_batch(cur, "EXECUTE cat (%s, %s, %s)", iter(containing_function))
 
-# Заполнение списка категорий
-for i in range(MAX_CATEGORIES):
-    categories_list[i][0] = category_uuid[i]
-    categories_list[i][1] = 'Category_' + str(i + 1)
-    categories_list[i][2] = category_uuid[i]
 
-pseudo_logger()
+@timeit
+def inserting_messages_data(cur, message_uuid, category_uuid, author_uuid):
+    cur.execute("PREPARE mes AS INSERT INTO messages VALUES($1, $2, $3, $4, $5)")
+    containing_function = containing_messages_list(message_uuid, category_uuid, author_uuid)
+    execute_batch(cur, "EXECUTE mes (%s, %s, %s, %s, %s)", iter(containing_function))
 
-# ----------------------------------------------------------------------------------------------------------------------
 
-get_start_block_time()
+@timeit
+def commit_and_close(con, cur):
+    con.commit()
+    cur.close()
+    con.close()
 
-# Заполнение первого списка сообщений
-for i in range(HALF_MESSAGES):
-    messages_list[i][0] = message_uuid[i]
-    messages_list[i][1] = 'Text_' + str(i + 1)
-    messages_list[i][2] = random.choice(category_uuid)
-    messages_list[i][3] = T_START + (T_END - T_START) * random.random()
-    messages_list[i][4] = random.choice(author_uuid)
 
-pseudo_logger()
+@timeit
+def main():
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        thread_1 = executor.submit(author_uuid_creation)
+        thread_2 = executor.submit(category_uuid_creation)
+        thread_3 = executor.submit(message_uuid_creation)
+        author_uuid = thread_1.result()
+        category_uuid = thread_2.result()
+        message_uuid = thread_3.result()
 
-# ----------------------------------------------------------------------------------------------------------------------
+    con, cur = data_base_connecting()
 
-# Подключение к базе данных
-con = psycopg2.connect(
-    host=os.getenv("PG_HOST"),
-    database=os.getenv("PG_DATABASE"),
-    user=os.getenv("PG_USER"),
-    password=os.getenv("PG_PASSWORD"),
-    port=os.getenv("PG_PORT"))
-cur = con.cursor()
+    thread_1 = threading.Thread(target=inserting_users_data, args=(cur, author_uuid))
+    thread_2 = threading.Thread(target=inserting_categories_data, args=(cur, category_uuid))
+    thread_3 = threading.Thread(target=inserting_messages_data, args=(cur, message_uuid, category_uuid, author_uuid))
+    thread_1.start()
+    thread_2.start()
+    thread_1.join()
+    thread_2.join()
+    thread_3.start()
+    thread_3.join()
 
-# ----------------------------------------------------------------------------------------------------------------------
+    commit_and_close(con, cur)
 
-get_start_block_time()
 
-# Вставка пользователей в базу данных
-execute_values(cur, "INSERT INTO users (id, name) VALUES %s", users_list)
-
-pseudo_logger()
-
-# ----------------------------------------------------------------------------------------------------------------------
-
-get_start_block_time()
-
-# Вставка категорий в базу данных
-execute_values(cur, "INSERT INTO categories (id, name, parent_id) VALUES %s", categories_list)
-
-pseudo_logger()
-
-# ----------------------------------------------------------------------------------------------------------------------
-
-get_start_block_time()
-
-# Вставка сообщений в базу данных (Часть 1)
-execute_values(cur, "INSERT INTO messages (id, text, category_id, posted_at, author_id) VALUES %s", messages_list)
-
-pseudo_logger()
-
-# ----------------------------------------------------------------------------------------------------------------------
-
-# Удаление первого списка сообщений
-del (messages_list)
-
-# ----------------------------------------------------------------------------------------------------------------------
-
-get_start_block_time()
-
-# Заполнение второго списка сообщений
-for i in range(HALF_MESSAGES):
-    messages_list2[i][0] = message_uuid[i + HALF_MESSAGES]
-    messages_list2[i][1] = 'Text_' + str(i + HALF_MESSAGES + 1)
-    messages_list2[i][2] = random.choice(category_uuid)
-    messages_list2[i][3] = T_START + (T_END - T_START) * random.random()
-    messages_list2[i][4] = random.choice(author_uuid)
-
-pseudo_logger()
-
-# ----------------------------------------------------------------------------------------------------------------------
-
-get_start_block_time()
-
-# Вставка сообщений в базу данных (Часть 2)
-execute_values(cur, "INSERT INTO messages (id, text, category_id, posted_at, author_id) VALUES %s", messages_list2)
-
-pseudo_logger()
-
-# ----------------------------------------------------------------------------------------------------------------------
-
-# Окончание работы с базой данных
-con.commit()
-cur.close()
-con.close()
-
-# ----------------------------------------------------------------------------------------------------------------------
-
-print()
-print("Mission completed in " + get_checkpoint_time(START_TIME) + "! Congratulations!")
-print("Powered by: Python 3.7, PyCharm, psycopg2")
+main()
